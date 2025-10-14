@@ -151,18 +151,75 @@ void UpdatePredictor_2level(UINT32 PC, bool resolveDir, bool predDir, UINT32 bra
 /***********************************************************
 * 
 * 3. Open-Ended Predictor
+*     Perceptron Branch Predictor
+*
+*     Size = 4 bytes / int * 60 * 512 = 122 880 bytes
+*                4 * 60 + 4 * 512 + 4 =   2 292 bytes
+*                               Total = 125 172 bytes
 * 
 ***********************************************************/
-void InitPredictor_openend() {
 
+#define MAX_TABLES 60 // Number of Perceptron Tables
+#define MAX_WEIGHTS 512 // Number of Weights per Table
+#define THETA (1.93 * MAX_TABLES + MAX_TABLES/2) // Confidence Threshold for Training
+
+// To prevent oversaturated decisions, set MAX and MIN:
+#define WEIGHT_MAX 127
+#define WEIGHT_MIN -127
+
+int perceptrons[MAX_TABLES][MAX_WEIGHTS];
+unsigned int GHT[MAX_TABLES]; // Global History Table
+int indices[MAX_WEIGHTS]; // Stores indices used in last prediction
+
+int result = 0; // Most recent prediction confidence
+
+void InitPredictor_openend() {
+  for (int i = 0; i < MAX_TABLES; i ++) {
+    for (int j = 0; j < MAX_WEIGHTS; j++) {
+      // Initialize to a weak not taken state:
+      perceptrons[i][j] = -1;
+    }
+    GHT[i] = 0;
+  }
 }
 
 bool GetPrediction_openend(UINT32 PC) {
+  int prediction;
 
-  return TAKEN;
+  // Record most recent index:
+  indices[0] = PC%MAX_WEIGHTS;
+  prediction = perceptrons[0][indices[0]];
+
+  for (int i = 1; i < MAX_TABLES; i++) {
+    indices[i] = (GHT[i - 1] ^ PC) % MAX_WEIGHTS;
+    prediction += perceptrons[i][indices[i]];
+  }
+
+  result = prediction;
+
+  // If leans towards positive, T, otherwise, NT:
+  return prediction >= 0 ? TAKEN : NOT_TAKEN;
 }
 
 void UpdatePredictor_openend(UINT32 PC, bool resolveDir, bool predDir, UINT32 branchTarget) {
+  
+  // If prediction wrong or in training threshold:
+  if (predDir != resolveDir || abs(result) <= THETA) {
+    for (int i = 0; i < MAX_TABLES; i++) {
+      // If TAKEN: Increment prediction towards TAKEN (positive)
+      if (resolveDir) {
+        perceptrons[i][indices[i]] = (perceptrons[i][indices[i]] < WEIGHT_MAX) ? perceptrons[i][indices[i]] + 1 : WEIGHT_MAX;
+      // If NOT TAKEN: Decrement prediction towards NOT TAKEN (negative)
+      } else {
+        perceptrons[i][indices[i]] = (perceptrons[i][indices[i]] > WEIGHT_MIN) ? perceptrons[i][indices[i]] - 1 : WEIGHT_MIN;
+      }
+    }
+  }
 
+  // Shift history and save most recent history:
+  for (int i = MAX_TABLES - 1; i > 0; i--) {
+    GHT[i] = GHT[i - 1];
+  }
+  GHT[0] = resolveDir;
 }
 
