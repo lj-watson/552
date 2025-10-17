@@ -150,72 +150,108 @@ void UpdatePredictor_2level(UINT32 PC, bool resolveDir, bool predDir, UINT32 bra
 * 3. Open-Ended Predictor
 *     Perceptron Branch Predictor
 *
-*     Size = 4 bytes / int * 60 * 512 = 122 880 bytes
-*                4 * 60 + 4 * 512 + 4 =   2 292 bytes
-*                               Total = 125 172 bytes
-* 
+*     Size = number of perceptrons * history bits * weight size + history bits + bias bits
+*          = 256 * 62 * 8 + 62 + 256 = 127294 bits
 ***********************************************************/
 
-#define MAX_TABLES 60 // Number of Perceptron Tables
-#define MAX_WEIGHTS 512 // Number of Weights per Table
-#define THETA (1.93 * MAX_TABLES + MAX_TABLES/2) // Confidence Threshold for Training
+// branch history is the input x to the perceptron function
+
+#define NUM_PERCEPTRONS 256 // Number of Perceptron weights
+#define HISTORY_BITS 62 // Number of history bits
+#define THETA (1.93 * HISTORY_BITS + 14) // Confidence Threshold for Training
 
 // To prevent oversaturated decisions, set MAX and MIN:
 #define WEIGHT_MAX 127
 #define WEIGHT_MIN -127
 
-int perceptrons[MAX_TABLES][MAX_WEIGHTS];
-unsigned int GHT[MAX_TABLES]; // Global History Table
-int indices[MAX_WEIGHTS]; // Stores indices used in last prediction
+int8_t perceptron_weights[NUM_PERCEPTRONS][HISTORY_BITS];
+int8_t bias_weights[NUM_PERCEPTRONS];
+int8_t GHR[HISTORY_BITS]; // Global History Register stores -1/1
 
-int result = 0; // Most recent prediction confidence
+int idx;
+int result;
 
 void InitPredictor_openend() {
-  for (int i = 0; i < MAX_TABLES; i ++) {
-    for (int j = 0; j < MAX_WEIGHTS; j++) {
-      // Initialize to a weak not taken state:
-      perceptrons[i][j] = -1;
+  for (int i = 0; i < NUM_PERCEPTRONS; i ++) {
+    bias_weights[i] = 0;
+    for (int j = 0; j < HISTORY_BITS; j++) {
+      perceptron_weights[i][j] = 0;
     }
-    GHT[i] = 0;
+  }
+
+  for(int i = 0; i < HISTORY_BITS; i++)
+  {
+    GHR[i] = -1;
   }
 }
 
 bool GetPrediction_openend(UINT32 PC) {
-  int prediction;
 
-  // Record most recent index:
-  indices[0] = PC%MAX_WEIGHTS;
-  prediction = perceptrons[0][indices[0]];
+  // use ghr to xor with pc to reduce aliasing
+  uint32_t ghr_hash = 0;
+  for(int i = 0; i < 32 && i < HISTORY_BITS; i++)
+  {
+    if(GHR[i] == 1)
+    {
+      ghr_hash |= (1 << i);
+    }
+  }
+  
+  idx = (PC^ghr_hash) & (NUM_PERCEPTRONS - 1);
 
-  for (int i = 1; i < MAX_TABLES; i++) {
-    indices[i] = (GHT[i - 1] ^ PC) % MAX_WEIGHTS;
-    prediction += perceptrons[i][indices[i]];
+  // perceptron function
+  // y = w_0 + sum_i (x_i + w_i)
+  // where w is weight and x is branch history
+  // prediction which is -1 or 1
+
+  // w_0
+  int prediction = bias_weights[idx];
+
+  for (int i = 0; i < HISTORY_BITS; i++) {
+    prediction += perceptron_weights[idx][i] * GHR[i];
   }
 
   result = prediction;
 
-  // If leans towards positive, T, otherwise, NT:
+  // prediction is based on sign
   return prediction >= 0 ? TAKEN : NOT_TAKEN;
 }
 
 void UpdatePredictor_openend(UINT32 PC, bool resolveDir, bool predDir, UINT32 branchTarget) {
+
+  int target = resolveDir ? 1 : -1;
   
-  // If prediction wrong or in training threshold:
+  // if sign(y) != t || |y| <= theta
+  // w_i = w_i + t*x_i
+
   if (predDir != resolveDir || abs(result) <= THETA) {
-    for (int i = 0; i < MAX_TABLES; i++) {
-      // If TAKEN: Increment prediction towards TAKEN (positive)
-      if (resolveDir) {
-        perceptrons[i][indices[i]] = (perceptrons[i][indices[i]] < WEIGHT_MAX) ? perceptrons[i][indices[i]] + 1 : WEIGHT_MAX;
-      // If NOT TAKEN: Decrement prediction towards NOT TAKEN (negative)
-      } else {
-        perceptrons[i][indices[i]] = (perceptrons[i][indices[i]] > WEIGHT_MIN) ? perceptrons[i][indices[i]] - 1 : WEIGHT_MIN;
+
+    // update w_0 (there is no x_0)
+    if(target == 1 && bias_weights[idx] < WEIGHT_MAX)
+    {
+      bias_weights[idx]++;
+    }
+    else if(target == -1 && bias_weights[idx] > WEIGHT_MIN)
+    {
+      bias_weights[idx]--;
+    }
+
+    for(int i = 0; i < HISTORY_BITS; i++)
+    {
+      if(target == GHR[i] && perceptron_weights[idx][i] < WEIGHT_MAX)
+      {
+        perceptron_weights[idx][i]++;
+      }
+      else if(target != GHR[i] && perceptron_weights[idx][i] > WEIGHT_MIN)
+      {
+        perceptron_weights[idx][i]--;
       }
     }
   }
 
   // Shift history and save most recent history:
-  for (int i = MAX_TABLES - 1; i > 0; i--) {
-    GHT[i] = GHT[i - 1];
+  for (int i = HISTORY_BITS - 1; i > 0; i--) {
+    GHR[i] = GHR[i - 1];
   }
-  GHT[0] = resolveDir;
+  GHR[0] = target;
 }
