@@ -6,16 +6,13 @@
 * 
 ***********************************************************/
 
-/*
-* Since Prediction Table is 2^10 = 1024 entries,
-* need 10 bits to index into it
-*/
-#define NUM_ENTRIES 4096
+#define NUM_ENTRIES 1024
 // each entry has 4*2 bit counters = 1 byte
+// total = 1024*4*2 = 8192 bits of storage
 #define COUNTERS_PER_BYTE 4
+#define NUM_COUNTERS (NUM_ENTRIES * COUNTERS_PER_BYTE)
 
 /*
-* Total Table Size = 8192/8 = 1024
 * Prediction Table Values:
 *   0 - Strongly Not Taken
 *   1 - Weak Not Taken
@@ -47,7 +44,7 @@ void InitPredictor_2bitsat() {
 
 bool GetPrediction_2bitsat(UINT32 PC) {
   // Get last 10 bits of PC to index:
-  int index = PC & (NUM_ENTRIES - 1);
+  int index = PC & (NUM_COUNTERS - 1);
   uint8_t prediction = get_2bit_prediction(index);
 
   // If 0/1: Predict NOT_TAKEN
@@ -57,7 +54,7 @@ bool GetPrediction_2bitsat(UINT32 PC) {
 
 void UpdatePredictor_2bitsat(UINT32 PC, bool resolveDir, bool predDir, UINT32 branchTarget) {
   // Get last 10 bits of PC to index:
-  int index = PC & (NUM_ENTRIES - 1);
+  int index = PC & (NUM_COUNTERS - 1);
   uint8_t prediction = get_2bit_prediction(index);
 
   // If branch was taken, increment:
@@ -222,4 +219,3 @@ void UpdatePredictor_openend(UINT32 PC, bool resolveDir, bool predDir, UINT32 br
   }
   GHT[0] = resolveDir;
 }
-
