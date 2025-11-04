@@ -190,13 +190,41 @@ static bool reservFP_insert(instruction_t* instr, int current_cycle)
 
   return false;
 }
-/* ECE552 Assignment 3 - END CODE */
 
 /* FUNCTIONAL UNITS */
+static bool fuINT_insert(instruction_t* instr, int current_cycle)
+{
+  // is an FU available
+  for(int i = 0; i < FU_INT_SIZE; i++)
+  {
+    if(fuINT[i] == NULL)
+    {
+      instr->tom_execute_cycle = current_cycle;
+      fuINT[i] = instr;
+      return true;
+    }
+  }
 
+  return false;
+}
 
-/* RESERVATION STATIONS */
+static bool fuFP_insert(instruction_t* instr, int current_cycle)
+{
+  // is an FU available
+  for(int i = 0; i < FU_FP_SIZE; i++)
+  {
+    if(fuFP[i] == NULL)
+    {
+      instr->tom_execute_cycle = current_cycle;
+      fuFP[i] = instr;
+      return true;
+    }
+  }
 
+  return false;
+}
+
+/* ECE552 Assignment 3 - END CODE */
 
 /* 
  * Description: 
@@ -260,6 +288,64 @@ void execute_To_CDB(int current_cycle) {
 void issue_To_execute(int current_cycle) {
 
   /* ECE552 Assignment 3 - BEGIN CODE */
+
+  // INT Instructions:
+  for (int i = 0; i < RESERV_INT_SIZE; i++) {
+    instruction_t* instr = reservINT[i];
+
+    if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+      continue;
+    }
+    // An instruction spends at least 1 cycle in this stage:
+    if (instr->tom_issue_cycle == current_cycle) {
+      return;
+    }
+
+    // Check RAW hazards:
+    bool hasRAWHazard = false;
+    for (int j = 0; j < 3; j++) {
+      if (instr->Q[j] != NULL) {
+        hasRAWHazard = true;
+      }
+    }
+
+    if (!hasRAWHazard) {
+      if (!fuINT_insert(instr, current_cycle)) {
+        break; // No FUs available
+      }
+    }
+  }
+
+  // FP Instructions:
+  for (int i = 0; i < RESERV_FP_SIZE; i++) {
+    instruction_t* instr = reservFP[i];
+
+    if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+      continue;
+    }
+    // An instruction spends at least 1 cycle in this stage:
+    if (instr->tom_issue_cycle == current_cycle) {
+      return;
+    }
+    // Skip if not issued:
+    if (instr->tom_issue_cycle == 0) {
+      continue;
+    }
+
+    // Check RAW hazards:
+    bool hasRAWHazard = false;
+    for (int j = 0; j < 3; j++) {
+      if (instr->Q[j] != NULL) {
+        hasRAWHazard = true;
+      }
+    }
+
+    if (!hasRAWHazard) {
+      if (!fuFP_insert(instr, current_cycle)) {
+        break; // No FUs available
+      }
+    }
+  }
   /* ECE552 Assignment 3 - END CODE */
 }
 
