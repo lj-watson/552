@@ -22,17 +22,17 @@
 #include "instr.h"
 
 /* PARAMETERS OF THE TOMASULO'S ALGORITHM */
+/* ECE552 Assignment 3 - BEGIN CODE */
+#define INSTR_QUEUE_SIZE         16
 
-#define INSTR_QUEUE_SIZE         10
-
-#define RESERV_INT_SIZE    4
-#define RESERV_FP_SIZE     2
-#define FU_INT_SIZE        2
+#define RESERV_INT_SIZE    5
+#define RESERV_FP_SIZE     3
+#define FU_INT_SIZE        3
 #define FU_FP_SIZE         1
 
-#define FU_INT_LATENCY     4
-#define FU_FP_LATENCY      9
-
+#define FU_INT_LATENCY     5
+#define FU_FP_LATENCY      7
+/* ECE552 Assignment 3 - END CODE */
 /* IDENTIFYING INSTRUCTIONS */
 
 //unconditional branch, jump or call
@@ -98,6 +98,99 @@ static instruction_t* map_table[MD_TOTAL_REGS];
 
 //the index of the last instruction fetched
 static int fetch_index = 0;
+
+/* ECE552 Assignment 3 - BEGIN CODE */
+// use a circular buffer for the ifq entries
+static int ifq_head_idx = 0;
+static int ifq_tail_idx = 0;
+
+static void ifq_push(instruction_t* instr)
+{
+  // insert instr into tail of ifq
+  instr_queue[ifq_tail_idx] = instr;
+  // update new tail index (circular)
+  ifq_tail_idx = (ifq_tail_idx + 1) % INSTR_QUEUE_SIZE;
+  instr_queue_size++;
+}
+
+static void ifq_pop()
+{
+  // update ifq head index
+  ifq_head_idx = (ifq_head_idx + 1) % INSTR_QUEUE_SIZE;
+  instr_queue_size--;
+}
+
+static instruction_t* ifq_head()
+{
+  return instr_queue[ifq_head_idx];
+}
+
+/* MAP TABLE */
+static void update_q_from_map_table(instruction_t *instr)
+{
+  for(int i = 0; i < 3; i++)
+  {
+    int reg = instr->r_in[i];
+    if(reg != NULL && reg >= 0 && reg < MD_TOTAL_REGS && map_table[reg] != NULL)
+    {
+      instr->Q[i] = map_table[reg];
+    }
+    else
+    {
+      instr->Q[i] = NULL;
+    }
+  }
+}
+
+static void update_map_table(instruction_t *instr)
+{
+  for(int i = 0; i < 2; i++)
+  {
+    int reg = instr->r_out[i];
+    if(reg != NULL && reg >= 0 && reg < MD_TOTAL_REGS)
+    {
+      map_table[reg] = instr;
+    }
+  }
+}
+
+/* RESERVATION STATIONS */
+static bool reservINT_insert(instruction_t* instr, int current_cycle)
+{
+  // is a station available
+  for(int i = 0; i < RESERV_INT_SIZE; i++)
+  {
+    if(reservINT[i] == NULL)
+    {
+      instr->tom_dispatch_cycle = current_cycle;
+      update_q_from_map_table(instr);
+      update_map_table(instr);
+      reservINT[i] = instr;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static bool reservFP_insert(instruction_t* instr, int current_cycle)
+{
+  // is a station available
+  for(int i = 0; i < RESERV_FP_SIZE; i++)
+  {
+    if(reservFP[i] == NULL)
+    {
+      instr->tom_dispatch_cycle = current_cycle;
+      update_q_from_map_table(instr);
+      update_map_table(instr);
+      reservFP[i] = instr;
+      return true;
+    }
+  }
+
+  return false;
+}
+/* ECE552 Assignment 3 - END CODE */
 
 /* FUNCTIONAL UNITS */
 
@@ -236,19 +329,15 @@ void fetch(instruction_trace_t* trace) {
     instruction_t* next_instr = NULL;
 
     // Fetch next instr and skip all TRAP instructions:
-    do {
+    while(fetch_index < sim_num_insn)
+    {
+      next_instr = get_instr(trace, fetch_index);
       fetch_index++;
-      // If there are no more instructions to fetch, return:
-      if (fetch_index > sim_num_insn) {
+      if(next_instr != NULL && !IS_TRAP(next_instr->op))
+      {
+        ifq_push(next_instr);
         return;
       }
-      next_instr = get_instr(trace, fetch_index);
-    } while (next_instr != NULL && IS_TRAP(next_instr->op));
-
-    if (next_instr != NULL) {
-      // Place next instruction at the end of the queue:
-      instr_queue[instr_queue_size] = next_instr;
-      instr_queue_size++;
     }
   }
   /* ECE552 Assignment 3 - END CODE */
@@ -265,23 +354,52 @@ void fetch(instruction_trace_t* trace) {
  */
 void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
 
+  /* ECE552 Assignment 3 - BEGIN CODE */
+  // fetch next instruction and place into IFQ
   fetch(trace);
 
-  /* ECE552 Assignment 3 - BEGIN CODE */
-  // A fetched instruction can be dispatched in the same cycle:
-  for (int i = 0; i < INSTR_QUEUE_SIZE; i++) {
-    // Get the next instruction from the queue:
-    instruction_t* instr = instr_queue[i];
-    if (instr == NULL) {
-      return;
-    }
+  // A fetched instruction can be dispatched in the same cycle,
+  // check if the oldest instruction can be dispatched
+  // if not, all younger instructions must stall
 
-    // Start dispatch for the next instruction in the queue:
-    if (instr->tom_dispatch_cycle == 0) {
-      instr->tom_dispatch_cycle = current_cycle;
-      return;
+  if(instr_queue_size == 0)
+  {
+    return;
+  }
+
+  instruction_t* instr = ifq_head();
+
+  // control instructions do not use subsequent stages
+  if(IS_COND_CTRL(instr->op) || IS_UNCOND_CTRL(instr->op))
+  {
+    instr->tom_dispatch_cycle = current_cycle;
+    // remove instr from dispatch queue
+    ifq_pop();
+    return;
+  }
+
+  // dispatch instruction if reservation station is available
+  if(USES_INT_FU(instr->op))
+  {
+    if(reservINT_insert(instr, current_cycle))
+    {
+      ifq_pop();
     }
   }
+  else if(USES_FP_FU(instr->op))
+  {
+    if(reservFP_insert(instr, current_cycle))
+    {
+      ifq_pop();
+    }
+  }
+  else
+  {
+    die("how");
+  }
+
+  return;
+
   /* ECE552 Assignment 3 - END CODE */
 }
 
@@ -331,6 +449,12 @@ counter_t runTomasulo(instruction_trace_t* trace)
   while (true) {
 
     /* ECE552 Assignment 3 - BEGIN CODE */
+    // do not chain stages within one cycle
+    CDB_To_retire(cycle);
+    execute_To_CDB(cycle);
+    issue_To_execute(cycle);
+    dispatch_To_issue(cycle);
+    fetch_To_dispatch(trace, cycle);
     /* ECE552 Assignment 3 - END CODE */
 
     cycle++;
