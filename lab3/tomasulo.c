@@ -194,6 +194,7 @@ void dispatch_To_issue(int current_cycle) {
     if (IS_ICOMP(instr->op) || IS_LOAD(instr->op) || IS_STORE(instr->op)) {
       for (int j = 0; j < RESERV_INT_SIZE; j++) {
         if (reservINT[j] == NULL) {
+          reservINT[j] = instr;
           reservAvailable = true;
           break;
         }
@@ -201,6 +202,7 @@ void dispatch_To_issue(int current_cycle) {
     } else if (IS_FCOMP(instr->op)) {
       for (int j = 0; j < RESERV_FP_SIZE; j++) {
         if (reservFP[j] == NULL) {
+          reservFP[j] = instr;
           reservAvailable = true;
           break;
         }
@@ -209,9 +211,9 @@ void dispatch_To_issue(int current_cycle) {
       reservAvailable = true; // Does not require any RS
     }
 
-    // Can complete dispatch if RS is available next cycle:
+    // Can complete dispatch if RS is available next cycle (Therefore, issue next cycle):
     if (reservAvailable) {
-      instr->tom_issue_cycle = current_cycle;
+      instr->tom_issue_cycle = current_cycle + 1;
     }
   }
 
