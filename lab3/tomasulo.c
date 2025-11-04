@@ -181,6 +181,39 @@ void issue_To_execute(int current_cycle) {
 void dispatch_To_issue(int current_cycle) {
 
   /* ECE552 Assignment 3 - BEGIN CODE */
+   for (int i = 0; i < INSTR_QUEUE_SIZE; i++) {
+    // Get the next instruction from the queue:
+    instruction_t* instr = instr_queue[i];
+    if (instr == NULL) {
+      continue;
+    }
+
+    // Check if reservation station is available:
+    bool reservAvailable = false;
+    // Note: Memory instructions use the integer FUs and RSs:
+    if (IS_ICOMP(instr->op) || IS_LOAD(instr->op) || IS_STORE(instr->op)) {
+      for (int j = 0; j < RESERV_INT_SIZE; j++) {
+        if (reservINT[j] == NULL) {
+          reservAvailable = true;
+          break;
+        }
+      }
+    } else if (IS_FCOMP(instr->op)) {
+      for (int j = 0; j < RESERV_FP_SIZE; j++) {
+        if (reservFP[j] == NULL) {
+          reservAvailable = true;
+          break;
+        }
+      }
+    } else if (IS_COND_CTRL(instr->op) || IS_UNCOND_CTRL(instr->op)) {
+      reservAvailable = true; // Does not require any RS
+    }
+
+    // Can complete dispatch if RS is available next cycle:
+    if (reservAvailable) {
+      instr->tom_issue_cycle = current_cycle;
+    }
+  }
 
   /* ECE552 Assignment 3 - END CODE */
 }
@@ -233,13 +266,20 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
   fetch(trace);
 
   /* ECE552 Assignment 3 - BEGIN CODE */
-  // Get the next instruction from the queue:
-  instruction_t* instr = instr_queue[0];
-  if (instr == NULL) {
-    return;
-  }
+  // A fetched instruction can be dispatched in the same cycle:
+  for (int i = 0; i < INSTR_QUEUE_SIZE; i++) {
+    // Get the next instruction from the queue:
+    instruction_t* instr = instr_queue[i];
+    if (instr == NULL) {
+      return;
+    }
 
-  instr->tom_dispatch_cycle = current_cycle;
+    // Start dispatch for the next instruction in the queue:
+    if (instr->tom_dispatch_cycle == 0) {
+      instr->tom_dispatch_cycle = current_cycle;
+      return;
+    }
+  }
   /* ECE552 Assignment 3 - END CODE */
 }
 
@@ -289,11 +329,6 @@ counter_t runTomasulo(instruction_trace_t* trace)
   while (true) {
 
     /* ECE552 Assignment 3 - BEGIN CODE */
-    fetch_To_dispatch(trace, cycle);
-    dispatch_To_issue(cycle);
-    issue_To_execute(cycle);
-    execute_To_CDB(cycle);
-    CDB_To_retire(cycle);
     /* ECE552 Assignment 3 - END CODE */
 
     cycle++;
