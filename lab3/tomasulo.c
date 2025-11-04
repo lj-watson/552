@@ -191,37 +191,13 @@ static bool reservFP_insert(instruction_t* instr, int current_cycle)
   return false;
 }
 
-/* FUNCTIONAL UNITS */
-static bool fuINT_insert(instruction_t* instr, int current_cycle)
-{
-  // is an FU available
-  for(int i = 0; i < FU_INT_SIZE; i++)
-  {
-    if(fuINT[i] == NULL)
-    {
-      instr->tom_execute_cycle = current_cycle;
-      fuINT[i] = instr;
-      return true;
-    }
+static bool is_execute_complete(instruction_t* instr, int current_cycle) {
+  int latency = 0;
+  if (IS_ICOMP(instr->op) || IS_LOAD(instr->op) || IS_STORE(instr->op)) {
+    return (current_cycle - instr->tom_execute_cycle) >= FU_INT_LATENCY;
+  } else if (IS_FCOMP{instr->op}) {
+    return (current_cycle - instr->tom_execute_cycle) >= FU_FP_LATENCY;
   }
-
-  return false;
-}
-
-static bool fuFP_insert(instruction_t* instr, int current_cycle)
-{
-  // is an FU available
-  for(int i = 0; i < FU_FP_SIZE; i++)
-  {
-    if(fuFP[i] == NULL)
-    {
-      instr->tom_execute_cycle = current_cycle;
-      fuFP[i] = instr;
-      return true;
-    }
-  }
-
-  return false;
 }
 
 /* ECE552 Assignment 3 - END CODE */
@@ -271,6 +247,18 @@ void CDB_To_retire(int current_cycle) {
 void execute_To_CDB(int current_cycle) {
 
   /* ECE552 Assignment 3 - BEGIN CODE */
+  for (int i = 0; i < FU_INT_SIZE; i++) {
+    instruction_t* instr = fuINT[i];
+    if (instr == NULL || !is_execute_complete(instr, current_cycle)) {
+      continue;
+    }
+
+    if (WRITES_CDB(instr->op)) {
+
+    } else {
+      
+    }
+  }
   /* ECE552 Assignment 3 - END CODE */
 
 }
@@ -290,60 +278,79 @@ void issue_To_execute(int current_cycle) {
   /* ECE552 Assignment 3 - BEGIN CODE */
 
   // INT Instructions:
-  for (int i = 0; i < RESERV_INT_SIZE; i++) {
-    instruction_t* instr = reservINT[i];
-
-    if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+  for (int i = 0; i < FU_INT_SIZE; i++) {
+    if (fuINT[i] == NULL) {
       continue;
     }
-    // An instruction spends at least 1 cycle in this stage:
-    if (instr->tom_issue_cycle == current_cycle) {
-      return;
-    }
+    // Need to prioritize the oldest instruction (based on index):
+    instruction_t* oldestInstr = NULL;
+    for (int j = 0; j < RESERV_INT_SIZE; j++) {
+      instruction_t* instr = reservINT[j];
 
-    // Check RAW hazards:
-    bool hasRAWHazard = false;
-    for (int j = 0; j < 3; j++) {
-      if (instr->Q[j] != NULL) {
-        hasRAWHazard = true;
+      if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+        continue;
+      }
+      // An instruction spends at least 1 cycle in this stage:
+      if (instr->tom_issue_cycle == current_cycle) {
+        return;
+      }
+
+      // Check RAW hazards:
+      bool hasRAWHazard = false;
+      for (int k = 0; k < 3; k++) {
+        if (instr->Q[k] != NULL) {
+          hasRAWHazard = true;
+        }
+      }
+
+      if (!hasRAWHazard) {
+        if (oldestInstr == NULL || oldestInstr->index > instr->index) {
+          oldestInstr = instr;
+        }
       }
     }
 
-    if (!hasRAWHazard) {
-      if (!fuINT_insert(instr, current_cycle)) {
-        break; // No FUs available
-      }
+    if (oldestInstr != NULL) {
+      oldestInstr->tom_execute_cycle = current_cycle;
+      fuINT[i] = oldestInstr;
     }
   }
 
   // FP Instructions:
-  for (int i = 0; i < RESERV_FP_SIZE; i++) {
-    instruction_t* instr = reservFP[i];
-
-    if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+  for (int i = 0; i < FU_FP_SIZE; i++) {
+    if (fuFP[i] == NULL) {
       continue;
     }
-    // An instruction spends at least 1 cycle in this stage:
-    if (instr->tom_issue_cycle == current_cycle) {
-      return;
-    }
-    // Skip if not issued:
-    if (instr->tom_issue_cycle == 0) {
-      continue;
-    }
+    instruction_t* oldestInstr = NULL;
+    for (int j = 0; j < RESERV_FP_SIZE; j++) {
+      instruction_t* instr = reservFP[j];
 
-    // Check RAW hazards:
-    bool hasRAWHazard = false;
-    for (int j = 0; j < 3; j++) {
-      if (instr->Q[j] != NULL) {
-        hasRAWHazard = true;
+      if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+        continue;
+      }
+      // An instruction spends at least 1 cycle in this stage:
+      if (instr->tom_issue_cycle == current_cycle) {
+        return;
+      }
+
+      // Check RAW hazards:
+      bool hasRAWHazard = false;
+      for (int k = 0; k < 3; k++) {
+        if (instr->Q[k] != NULL) {
+          hasRAWHazard = true;
+        }
+      }
+
+      if (!hasRAWHazard) {
+        if (oldestInstr == NULL || oldestInstr->index > instr->index) {
+          oldestInstr = instr;
+        }
       }
     }
 
-    if (!hasRAWHazard) {
-      if (!fuFP_insert(instr, current_cycle)) {
-        break; // No FUs available
-      }
+    if (oldestInstr != NULL) {
+      oldestInstr->tom_execute_cycle = current_cycle;
+      fuFP[i] = oldestInstr;
     }
   }
   /* ECE552 Assignment 3 - END CODE */
