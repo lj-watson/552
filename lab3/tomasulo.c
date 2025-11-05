@@ -155,6 +155,8 @@ static void update_map_table(instruction_t *instr)
 }
 
 /* RESERVATION STATIONS */
+static int reservINT_dispatched_idx = -1;
+static int reservFP_dispatched_idx = -1;
 static bool reservINT_insert(instruction_t* instr, int current_cycle)
 {
   // is a station available
@@ -166,6 +168,7 @@ static bool reservINT_insert(instruction_t* instr, int current_cycle)
       update_q_from_map_table(instr);
       update_map_table(instr);
       reservINT[i] = instr;
+      reservINT_dispatched_idx = i;
       return true;
     }
   }
@@ -184,6 +187,7 @@ static bool reservFP_insert(instruction_t* instr, int current_cycle)
       update_q_from_map_table(instr);
       update_map_table(instr);
       reservFP[i] = instr;
+      reservFP_dispatched_idx = i;
       return true;
     }
   }
@@ -199,6 +203,8 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
     return (current_cycle - instr->tom_execute_cycle) >= FU_FP_LATENCY;
   }
 }
+
+bool inst_ready_this_cycle[]
 
 /* ECE552 Assignment 3 - END CODE */
 
@@ -279,7 +285,9 @@ void issue_To_execute(int current_cycle) {
 
   // INT Instructions:
   for (int i = 0; i < FU_INT_SIZE; i++) {
-    if (fuINT[i] == NULL) {
+
+    // function unit is busy
+    if (fuINT[i] != NULL) {
       continue;
     }
     // Need to prioritize the oldest instruction (based on index):
@@ -287,12 +295,13 @@ void issue_To_execute(int current_cycle) {
     for (int j = 0; j < RESERV_INT_SIZE; j++) {
       instruction_t* instr = reservINT[j];
 
-      if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+      // RS has an entry, it has been issued, and has not already been executed
+      if (instr == NULL || instr->tom_issue_cycle == -1 || instr->tom_execute_cycle != -1) {
         continue;
       }
       // An instruction spends at least 1 cycle in this stage:
       if (instr->tom_issue_cycle == current_cycle) {
-        return;
+        continue;
       }
 
       // Check RAW hazards:
@@ -318,19 +327,19 @@ void issue_To_execute(int current_cycle) {
 
   // FP Instructions:
   for (int i = 0; i < FU_FP_SIZE; i++) {
-    if (fuFP[i] == NULL) {
+    if (fuFP[i] != NULL) {
       continue;
     }
     instruction_t* oldestInstr = NULL;
     for (int j = 0; j < RESERV_FP_SIZE; j++) {
       instruction_t* instr = reservFP[j];
 
-      if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
+      if (instr == NULL || instr->tom_issue_cycle == -1 || instr->tom_execute_cycle != -1) {
         continue;
       }
       // An instruction spends at least 1 cycle in this stage:
       if (instr->tom_issue_cycle == current_cycle) {
-        return;
+        continue;
       }
 
       // Check RAW hazards:
@@ -367,41 +376,14 @@ void issue_To_execute(int current_cycle) {
 void dispatch_To_issue(int current_cycle) {
 
   /* ECE552 Assignment 3 - BEGIN CODE */
-   for (int i = 0; i < INSTR_QUEUE_SIZE; i++) {
-    // Get the next instruction from the queue:
-    instruction_t* instr = instr_queue[i];
-    if (instr == NULL) {
-      continue;
-    }
-
-    // Check if reservation station is available:
-    bool reservAvailable = false;
-    // Note: Memory instructions use the integer FUs and RSs:
-    if (IS_ICOMP(instr->op) || IS_LOAD(instr->op) || IS_STORE(instr->op)) {
-      for (int j = 0; j < RESERV_INT_SIZE; j++) {
-        if (reservINT[j] == NULL) {
-          reservINT[j] = instr;
-          reservAvailable = true;
-          break;
-        }
-      }
-    } else if (IS_FCOMP(instr->op)) {
-      for (int j = 0; j < RESERV_FP_SIZE; j++) {
-        if (reservFP[j] == NULL) {
-          reservFP[j] = instr;
-          reservAvailable = true;
-          break;
-        }
-      }
-    } else if (IS_COND_CTRL(instr->op) || IS_UNCOND_CTRL(instr->op)) {
-      reservAvailable = true; // Does not require any RS
-    }
 
     // Can complete dispatch if RS is available next cycle (Therefore, issue next cycle):
-    if (reservAvailable) {
-      instr->tom_issue_cycle = current_cycle + 1;
+    if (reservINT_dispatched_idx != -1) {
+      reservINT[reservINT_dispatched_idx]->tom_issue_cycle = current_cycle;
     }
-  }
+    else if (reservFP_dispatched_idx != -1) {
+      reservFP[reservFP_dispatched_idx]->tom_issue_cycle = current_cycle;
+    }
 
   /* ECE552 Assignment 3 - END CODE */
 }
@@ -428,6 +410,11 @@ void fetch(instruction_trace_t* trace) {
       fetch_index++;
       if(next_instr != NULL && !IS_TRAP(next_instr->op))
       {
+        // set all initial cycle paramaters
+        next_instr->tom_dispatch_cycle = -1;
+        next_instr->tom_issue_cycle = -1;
+        next_instr->tom_execute_cycle = -1;
+        next_instr->tom_cdb_cycle = -1;
         ifq_push(next_instr);
         return;
       }
@@ -454,6 +441,9 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
   // A fetched instruction can be dispatched in the same cycle,
   // check if the oldest instruction can be dispatched
   // if not, all younger instructions must stall
+
+  reservINT_dispatched_idx = -1;
+  reservFP_dispatched_idx = -1;
 
   if(instr_queue_size == 0)
   {
