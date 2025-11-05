@@ -212,12 +212,44 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
 static void clear_map_table_entry(instruction_t* instr)
 {
   // clear map table entry
+  for(int i = 0; i < 2; i++)
+  {
+    int reg = instr->r_out[i];
+    if(reg != DNA && reg < MD_TOTAL_REGS)
+    {
+      map_table[reg] = NULL;
+    }
+  }
 }
 
 static void free_rs_and_fu(instruction_t* instr)
 {
-  // free RS entry
-  // free functional unit
+  if (USES_INT_FU(instr->op)) {
+    for (int i = 0; i < RESERV_INT_SIZE; i++) {
+      if (reservINT[i] == instr) {
+        reservINT[i] = NULL;
+      }
+    }
+    for (int i = 0; i < FU_INT_SIZE; i++) {
+      if (fuINT[i] == instr) {
+        fuINT[i] = NULL;
+      }
+    }
+  }
+
+  
+  if (USES_FP_FU(instr->op)) {
+    for (int i = 0; i < RESERV_FP_SIZE; i++) {
+      if (reservFP[i] == instr) {
+        reservFP[i] = NULL;
+      }
+    }
+    for (int i = 0; i < FU_FP_SIZE; i++) {
+      if (fuFP[i] == instr) {
+        fuFP[i] = NULL;
+      }
+    }
+  }
 }
 /* ECE552 Assignment 3 - END CODE */
 
@@ -405,7 +437,13 @@ void issue_To_execute(int current_cycle) {
       bool hasRAWHazard = false;
       for (int k = 0; k < 3; k++) {
         if (instr->Q[k] != NULL && (instr->Q[k]->tom_cdb_cycle == 0 || instr->Q[k]->tom_cdb_cycle >= current_cycle)) {
-          hasRAWHazard = true;
+          // Some instructions do not write to the CDB but are RAW hazards
+          // Need to check if still in map table:
+          for (int l = 0; l < MD_TOTAL_REGS; l++) {
+            if (instr->Q[k] == map_table[l]) {
+              hasRAWHazard = true;
+            }
+          }
         }
       }
 
@@ -442,8 +480,12 @@ void issue_To_execute(int current_cycle) {
       // Check RAW hazards:
       bool hasRAWHazard = false;
       for (int k = 0; k < 3; k++) {
-        if (instr->Q[k] != NULL) {
-          hasRAWHazard = true;
+        if (instr->Q[k] != NULL && (instr->Q[k]->tom_cdb_cycle == 0 || instr->Q[k]->tom_cdb_cycle >= current_cycle)) {
+          for (int l = 0; l < MD_TOTAL_REGS; l++) {
+            if (instr->Q[k] == map_table[l]) {
+              hasRAWHazard = true;
+            }
+          }
         }
       }
 
@@ -575,7 +617,8 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
   }
   else
   {
-    die("how");
+    printf("This instruction is none of the above, removing from ifq\n");
+    ifq_pop();
   }
 
   return;
