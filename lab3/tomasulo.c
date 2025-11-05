@@ -295,7 +295,6 @@ void CDB_To_retire(int current_cycle) {
   /* ECE552 Assignment 3 - BEGIN CODE */
   if(commonDataBus != NULL)
   {
-    clear_q_operands(commonDataBus);
     clear_map_table_entry(commonDataBus);
     commonDataBus = NULL;
   }
