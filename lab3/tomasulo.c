@@ -405,7 +405,7 @@ void issue_To_execute(int current_cycle) {
       // Check RAW hazards:
       bool hasRAWHazard = false;
       for (int k = 0; k < 3; k++) {
-        if (instr->Q[k] != NULL || (instr->Q[k]->tom_cdb_cycle != 0 && instr->Q[k]->tom_cdb_cycle >= current_cycle)) {
+        if (instr->Q[k] != NULL && (instr->Q[k]->tom_cdb_cycle == 0 || instr->Q[k]->tom_cdb_cycle >= current_cycle)) {
           hasRAWHazard = true;
         }
       }
