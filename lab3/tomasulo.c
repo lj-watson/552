@@ -199,7 +199,7 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
   int latency = 0;
   if (IS_ICOMP(instr->op) || IS_LOAD(instr->op) || IS_STORE(instr->op)) {
     return (current_cycle - instr->tom_execute_cycle) >= FU_INT_LATENCY;
-  } else if (IS_FCOMP{instr->op}) {
+  } else if (IS_FCOMP(instr->op)) {
     return (current_cycle - instr->tom_execute_cycle) >= FU_FP_LATENCY;
   }
 }
@@ -217,9 +217,52 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
 static bool is_simulation_done(counter_t sim_insn) {
   /* ECE552 Assignment 3 - BEGIN CODE */
 
-  // If # of completed instructions = total # instruction, sim is done:
-  return instr_queue_size == sim_insn;
+  // If # of fetched instructions = total # instruction:
+  if(fetch_index < sim_insn) return false;
+  
+  // all pipelines empty
+  if(instr_queue_size != 0) return false;
 
+  for(int i = 0; i < RESERV_INT_SIZE; i++)
+  {
+    if(reservINT[i] != NULL)
+    {
+      return false;
+    }
+  }
+
+  for(int i = 0; i < RESERV_FP_SIZE; i++)
+  {
+    if(reservFP[i] != NULL)
+    {
+      return false;
+    }
+  }
+
+  for(int i = 0; i < FU_INT_SIZE; i++)
+  {
+    if(fuINT[i] != NULL)
+    {
+      return false;
+    }
+  }
+
+  for(int i = 0; i < FU_FP_SIZE; i++)
+  {
+    if(fuFP[i] != NULL)
+    {
+      return false;
+    }
+  }
+
+  if(commonDataBus != NULL) return false;
+
+  for(int i = 0; i < MD_TOTAL_REGS; i++)
+  {
+    if(map_table[i] != NULL) return false;
+  }
+  
+  return true;
   /* ECE552 Assignment 3 - END CODE */
 }
 
