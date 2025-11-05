@@ -203,9 +203,6 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
     return (current_cycle - instr->tom_execute_cycle) >= FU_FP_LATENCY;
   }
 }
-
-bool inst_ready_this_cycle[]
-
 /* ECE552 Assignment 3 - END CODE */
 
 /* 
