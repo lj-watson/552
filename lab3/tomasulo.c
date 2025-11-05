@@ -203,6 +203,10 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
   } else if (IS_FCOMP(instr->op)) {
     return (current_cycle - instr->tom_execute_cycle) >= FU_FP_LATENCY;
   }
+  else
+  {
+    die("inst not int or fp");
+  }
 }
 
 static void clear_map_table_entry(instruction_t* instr)
@@ -355,7 +359,7 @@ void execute_To_CDB(int current_cycle) {
 
   if(commonDataBus == NULL && oldest_completed_instr != NULL)
   {
-    instr->tom_cdb_cycle = current_cycle;
+    oldest_completed_instr->tom_cdb_cycle = current_cycle;
     commonDataBus = oldest_completed_instr;
     free_rs_and_fu(oldest_completed_instr);
   }
