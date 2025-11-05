@@ -313,9 +313,8 @@ void execute_To_CDB(int current_cycle) {
   /* ECE552 Assignment 3 - BEGIN CODE */
   // An instruction broadcasts its results via the
   // Common Data Bus (enters the CDB stage) the cycle after it completes execution
-  // current cycle == start + latency --> cycle after completion
-  // however since there is no internal forwarding it don't actually do anything
-  // until cdb to retire in the next cycle
+  // only oldest completed instruction can broadcast to cdb
+  instruction_t *oldest_completed_instr = NULL;
   for (int i = 0; i < FU_INT_SIZE; i++) {
     instruction_t* instr = fuINT[i];
     if (instr == NULL || !is_execute_complete(instr, current_cycle)) {
@@ -324,17 +323,41 @@ void execute_To_CDB(int current_cycle) {
 
     if(WRITES_CDB(instr->op))
     {
-      if(commonDataBus == NULL)
+      if(oldest_completed_instr == NULL || oldest_completed_instr->index > instr->index)
       {
-        instr->tom_cdb_cycle = current_cycle;
-        commonDataBus = instr;
-        free_rs_and_fu(instr);
+        oldest_completed_instr = instr;
       }
     }
     else
     {
       free_rs_and_fu(instr);
     }
+  }
+
+  for (int i = 0; i < FU_FP_SIZE; i++) {
+    instruction_t* instr = fuFP[i];
+    if (instr == NULL || !is_execute_complete(instr, current_cycle)) {
+      continue;
+    }
+
+    if(WRITES_CDB(instr->op))
+    {
+      if(oldest_completed_instr == NULL || oldest_completed_instr->index > instr->index)
+      {
+        oldest_completed_instr = instr;
+      }
+    }
+    else
+    {
+      free_rs_and_fu(instr);
+    }
+  }
+
+  if(commonDataBus == NULL && oldest_completed_instr != NULL)
+  {
+    instr->tom_cdb_cycle = current_cycle;
+    commonDataBus = oldest_completed_instr;
+    free_rs_and_fu(oldest_completed_instr);
   }
   /* ECE552 Assignment 3 - END CODE */
 
@@ -367,7 +390,7 @@ void issue_To_execute(int current_cycle) {
       instruction_t* instr = reservINT[j];
 
       // RS has an entry, it has been issued, and has not already been executed
-      if (instr == NULL || instr->tom_issue_cycle == -1 || instr->tom_execute_cycle != -1) {
+      if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
         continue;
       }
       // An instruction spends at least 1 cycle in this stage:
@@ -405,7 +428,7 @@ void issue_To_execute(int current_cycle) {
     for (int j = 0; j < RESERV_FP_SIZE; j++) {
       instruction_t* instr = reservFP[j];
 
-      if (instr == NULL || instr->tom_issue_cycle == -1 || instr->tom_execute_cycle != -1) {
+      if (instr == NULL || instr->tom_issue_cycle == 0 || instr->tom_execute_cycle != 0) {
         continue;
       }
       // An instruction spends at least 1 cycle in this stage:
@@ -482,10 +505,10 @@ void fetch(instruction_trace_t* trace) {
       if(next_instr != NULL && !IS_TRAP(next_instr->op))
       {
         // set all initial cycle paramaters
-        next_instr->tom_dispatch_cycle = -1;
-        next_instr->tom_issue_cycle = -1;
-        next_instr->tom_execute_cycle = -1;
-        next_instr->tom_cdb_cycle = -1;
+        next_instr->tom_dispatch_cycle = 0;
+        next_instr->tom_issue_cycle = 0;
+        next_instr->tom_execute_cycle = 0;
+        next_instr->tom_cdb_cycle = 0;
         ifq_push(next_instr);
         return;
       }
