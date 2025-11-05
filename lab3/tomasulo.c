@@ -100,6 +100,7 @@ static instruction_t* map_table[MD_TOTAL_REGS];
 static int fetch_index = 0;
 
 /* ECE552 Assignment 3 - BEGIN CODE */
+#define DNA (0)
 // use a circular buffer for the ifq entries
 static int ifq_head_idx = 0;
 static int ifq_tail_idx = 0;
@@ -131,7 +132,7 @@ static void update_q_from_map_table(instruction_t *instr)
   for(int i = 0; i < 3; i++)
   {
     int reg = instr->r_in[i];
-    if(reg != NULL && reg >= 0 && reg < MD_TOTAL_REGS && map_table[reg] != NULL)
+    if(reg != DNA && reg < MD_TOTAL_REGS && map_table[reg] != NULL)
     {
       instr->Q[i] = map_table[reg];
     }
@@ -147,7 +148,7 @@ static void update_map_table(instruction_t *instr)
   for(int i = 0; i < 2; i++)
   {
     int reg = instr->r_out[i];
-    if(reg != NULL && reg >= 0 && reg < MD_TOTAL_REGS)
+    if(reg != DNA && reg < MD_TOTAL_REGS)
     {
       map_table[reg] = instr;
     }
@@ -202,6 +203,17 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
   } else if (IS_FCOMP(instr->op)) {
     return (current_cycle - instr->tom_execute_cycle) >= FU_FP_LATENCY;
   }
+}
+
+static void clear_map_table_entry(instruction_t* instr)
+{
+  // clear map table entry
+}
+
+static void free_rs_and_fu(instruction_t* instr)
+{
+  // free RS entry
+  // free functional unit
 }
 /* ECE552 Assignment 3 - END CODE */
 
@@ -261,7 +273,7 @@ static bool is_simulation_done(counter_t sim_insn) {
   {
     if(map_table[i] != NULL) return false;
   }
-  
+
   return true;
   /* ECE552 Assignment 3 - END CODE */
 }
@@ -277,6 +289,12 @@ static bool is_simulation_done(counter_t sim_insn) {
 void CDB_To_retire(int current_cycle) {
 
   /* ECE552 Assignment 3 - BEGIN CODE */
+  if(commonDataBus != NULL)
+  {
+    clear_q_operands(commonDataBus);
+    clear_map_table_entry(commonDataBus);
+    commonDataBus = NULL;
+  }
   /* ECE552 Assignment 3 - END CODE */
 
 }
@@ -293,16 +311,29 @@ void CDB_To_retire(int current_cycle) {
 void execute_To_CDB(int current_cycle) {
 
   /* ECE552 Assignment 3 - BEGIN CODE */
+  // An instruction broadcasts its results via the
+  // Common Data Bus (enters the CDB stage) the cycle after it completes execution
+  // current cycle == start + latency --> cycle after completion
+  // however since there is no internal forwarding it don't actually do anything
+  // until cdb to retire in the next cycle
   for (int i = 0; i < FU_INT_SIZE; i++) {
     instruction_t* instr = fuINT[i];
     if (instr == NULL || !is_execute_complete(instr, current_cycle)) {
       continue;
     }
 
-    if (WRITES_CDB(instr->op)) {
-
-    } else {
-      
+    if(WRITES_CDB(instr->op))
+    {
+      if(commonDataBus == NULL)
+      {
+        instr->tom_cdb_cycle = current_cycle;
+        commonDataBus = instr;
+        free_rs_and_fu(instr);
+      }
+    }
+    else
+    {
+      free_rs_and_fu(instr);
     }
   }
   /* ECE552 Assignment 3 - END CODE */
