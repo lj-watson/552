@@ -100,7 +100,6 @@ static instruction_t* map_table[MD_TOTAL_REGS];
 static int fetch_index = 0;
 
 /* ECE552 Assignment 3 - BEGIN CODE */
-#define DNA (0)
 // use a circular buffer for the ifq entries
 static int ifq_head_idx = 0;
 static int ifq_tail_idx = 0;
@@ -123,7 +122,17 @@ static void ifq_pop()
 
 static instruction_t* ifq_head()
 {
-  return instr_queue[ifq_head_idx];
+  if(instr_queue_size != 0) return instr_queue[ifq_head_idx];
+  else return NULL;
+}
+
+static instruction_t* ifq_tail()
+{
+  if(instr_queue_size != 0) 
+  {
+    return instr_queue[(ifq_tail_idx + INSTR_QUEUE_SIZE - 1) % INSTR_QUEUE_SIZE];
+  }
+  else return NULL;
 }
 
 /* MAP TABLE */
@@ -156,20 +165,16 @@ static void update_map_table(instruction_t *instr)
 }
 
 /* RESERVATION STATIONS */
-static int reservINT_dispatched_idx = -1;
-static int reservFP_dispatched_idx = -1;
-static bool reservINT_insert(instruction_t* instr, int current_cycle)
+static bool reservINT_insert(instruction_t* instr)
 {
   // is a station available
   for(int i = 0; i < RESERV_INT_SIZE; i++)
   {
     if(reservINT[i] == NULL)
     {
-      instr->tom_dispatch_cycle = current_cycle;
       update_q_from_map_table(instr);
       update_map_table(instr);
       reservINT[i] = instr;
-      reservINT_dispatched_idx = i;
       return true;
     }
   }
@@ -177,18 +182,16 @@ static bool reservINT_insert(instruction_t* instr, int current_cycle)
   return false;
 }
 
-static bool reservFP_insert(instruction_t* instr, int current_cycle)
+static bool reservFP_insert(instruction_t* instr)
 {
   // is a station available
   for(int i = 0; i < RESERV_FP_SIZE; i++)
   {
     if(reservFP[i] == NULL)
     {
-      instr->tom_dispatch_cycle = current_cycle;
       update_q_from_map_table(instr);
       update_map_table(instr);
       reservFP[i] = instr;
-      reservFP_dispatched_idx = i;
       return true;
     }
   }
@@ -197,7 +200,6 @@ static bool reservFP_insert(instruction_t* instr, int current_cycle)
 }
 
 static bool is_execute_complete(instruction_t* instr, int current_cycle) {
-  int latency = 0;
   if (IS_ICOMP(instr->op) || IS_LOAD(instr->op) || IS_STORE(instr->op)) {
     return (current_cycle - instr->tom_execute_cycle) >= FU_INT_LATENCY;
   } else if (IS_FCOMP(instr->op)) {
@@ -205,7 +207,8 @@ static bool is_execute_complete(instruction_t* instr, int current_cycle) {
   }
   else
   {
-    die("inst not int or fp");
+    printf("Received instruction that does not execute INT or FP");
+    return false;
   }
 }
 
@@ -215,7 +218,7 @@ static void clear_map_table_entry(instruction_t* instr)
   for(int i = 0; i < 2; i++)
   {
     int reg = instr->r_out[i];
-    if(reg != DNA && reg < MD_TOTAL_REGS)
+    if(reg != DNA && reg < MD_TOTAL_REGS && (map_table[reg] == instr))
     {
       map_table[reg] = NULL;
     }
@@ -437,13 +440,7 @@ void issue_To_execute(int current_cycle) {
       bool hasRAWHazard = false;
       for (int k = 0; k < 3; k++) {
         if (instr->Q[k] != NULL && (instr->Q[k]->tom_cdb_cycle == 0 || instr->Q[k]->tom_cdb_cycle >= current_cycle)) {
-          // Some instructions do not write to the CDB but are RAW hazards
-          // Need to check if still in map table:
-          for (int l = 0; l < MD_TOTAL_REGS; l++) {
-            if (instr->Q[k] == map_table[l]) {
               hasRAWHazard = true;
-            }
-          }
         }
       }
 
@@ -481,11 +478,7 @@ void issue_To_execute(int current_cycle) {
       bool hasRAWHazard = false;
       for (int k = 0; k < 3; k++) {
         if (instr->Q[k] != NULL && (instr->Q[k]->tom_cdb_cycle == 0 || instr->Q[k]->tom_cdb_cycle >= current_cycle)) {
-          for (int l = 0; l < MD_TOTAL_REGS; l++) {
-            if (instr->Q[k] == map_table[l]) {
               hasRAWHazard = true;
-            }
-          }
         }
       }
 
@@ -513,18 +506,39 @@ void issue_To_execute(int current_cycle) {
  * 	None
  */
 void dispatch_To_issue(int current_cycle) {
+  instruction_t* instr = ifq_head();
+  if(instr == NULL) return;
 
-  /* ECE552 Assignment 3 - BEGIN CODE */
+  // control instructions do not use subsequent stages
+  if(IS_COND_CTRL(instr->op) || IS_UNCOND_CTRL(instr->op))
+  {
+    // remove instr from dispatch queue
+    ifq_pop();
+    return;
+  }
 
-    // Can complete dispatch if RS is available next cycle (Therefore, issue next cycle):
-    if (reservINT_dispatched_idx != -1) {
-      reservINT[reservINT_dispatched_idx]->tom_issue_cycle = current_cycle;
+  // dispatch instruction if reservation station is available
+  if(USES_INT_FU(instr->op))
+  {
+    if(reservINT_insert(instr))
+    {
+      instr->tom_issue_cycle = current_cycle;
+      ifq_pop();
     }
-    else if (reservFP_dispatched_idx != -1) {
-      reservFP[reservFP_dispatched_idx]->tom_issue_cycle = current_cycle;
+  }
+  else if(USES_FP_FU(instr->op))
+  {
+    if(reservFP_insert(instr))
+    {
+      instr->tom_issue_cycle = current_cycle;
+      ifq_pop();
     }
-
-  /* ECE552 Assignment 3 - END CODE */
+  }
+  else
+  {
+    printf("This instruction is none of the above, removing from ifq\n");
+    ifq_pop();
+  }
 }
 
 /* 
@@ -547,7 +561,8 @@ void fetch(instruction_trace_t* trace) {
     {
       next_instr = get_instr(trace, fetch_index);
       fetch_index++;
-      if(next_instr != NULL && !IS_TRAP(next_instr->op))
+      // "the first instruction of your trace should be skipped"
+      if(next_instr != NULL && !IS_TRAP(next_instr->op) && next_instr->index > 0)
       {
         // set all initial cycle paramaters
         next_instr->tom_dispatch_cycle = 0;
@@ -580,45 +595,17 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
   // A fetched instruction can be dispatched in the same cycle,
   // check if the oldest instruction can be dispatched
   // if not, all younger instructions must stall
-
-  reservINT_dispatched_idx = -1;
-  reservFP_dispatched_idx = -1;
-
   if(instr_queue_size == 0)
   {
     return;
   }
 
-  instruction_t* instr = ifq_head();
+  // instr that was just fetched
+  instruction_t* instr = ifq_tail();
 
-  // control instructions do not use subsequent stages
-  if(IS_COND_CTRL(instr->op) || IS_UNCOND_CTRL(instr->op))
+  if(instr->tom_dispatch_cycle == 0)
   {
     instr->tom_dispatch_cycle = current_cycle;
-    // remove instr from dispatch queue
-    ifq_pop();
-    return;
-  }
-
-  // dispatch instruction if reservation station is available
-  if(USES_INT_FU(instr->op))
-  {
-    if(reservINT_insert(instr, current_cycle))
-    {
-      ifq_pop();
-    }
-  }
-  else if(USES_FP_FU(instr->op))
-  {
-    if(reservFP_insert(instr, current_cycle))
-    {
-      ifq_pop();
-    }
-  }
-  else
-  {
-    printf("This instruction is none of the above, removing from ifq\n");
-    ifq_pop();
   }
 
   return;
