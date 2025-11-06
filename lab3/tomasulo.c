@@ -506,6 +506,7 @@ void issue_To_execute(int current_cycle) {
  * 	None
  */
 void dispatch_To_issue(int current_cycle) {
+  /* ECE552 Assignment 3 - BEGIN CODE */
   instruction_t* instr = ifq_head();
   if(instr == NULL) return;
 
@@ -539,6 +540,7 @@ void dispatch_To_issue(int current_cycle) {
     printf("This instruction is none of the above, removing from ifq\n");
     ifq_pop();
   }
+  /* ECE552 Assignment 3 - END CODE */
 }
 
 /* 
