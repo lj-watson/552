@@ -559,7 +559,7 @@ void fetch(instruction_trace_t* trace) {
     instruction_t* next_instr = NULL;
 
     // Fetch next instr and skip all TRAP instructions:
-    while(fetch_index < sim_num_insn)
+    while(fetch_index <= sim_num_insn)
     {
       next_instr = get_instr(trace, fetch_index);
       fetch_index++;
