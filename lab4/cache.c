@@ -626,14 +626,12 @@ void stride_prefetcher(struct cache_t *cp, md_addr_t addr) {
 #define FILTER_SIZE 64
 
 typedef struct {
-  unsigned int pc;             
+  md_addr_t pc;             
   md_addr_t last_addr;          
   int stride;                   
   int confidence;               // Confidence counter (0-7)
   md_addr_t addr_history[HISTORY_BITS]; 
-  int history_idx;              
-  int successful_prefetches;    
-  int total_prefetches;         
+  int history_idx;                    
 } PerceptronEntry;
 
 typedef struct {
@@ -671,17 +669,12 @@ int calculate_degree(PerceptronEntry *entry) {
   if (entry->confidence < THETA) {
     return 1;
   }
-  
-  int accuracy = 0;
-  if (entry->total_prefetches > 0) {
-    accuracy = (entry->successful_prefetches * 100) / entry->total_prefetches;
-  }
 
-  if (accuracy >= 70 && entry->confidence >= 6) {
+  if (entry->confidence >= 6) {
     return 4;
-  } else if (accuracy >= 50 && entry->confidence >= 4) {
+  } else if (entry->confidence >= 4) {
     return 3;
-  } else if (accuracy >= 30 && entry->confidence >= 3) {
+  } else if (entry->confidence >= 3) {
     return 2;
   }
   
@@ -698,8 +691,6 @@ void open_ended_prefetcher(struct cache_t *cp, md_addr_t addr) {
       PLT[i].stride = 0;
       PLT[i].confidence = 0;
       PLT[i].history_idx = 0;
-      PLT[i].successful_prefetches = 0;
-      PLT[i].total_prefetches = 0;
 
       for (int j = 0; j < HISTORY_BITS; j++) {
         PLT[i].addr_history[j] = 0;
@@ -709,8 +700,8 @@ void open_ended_prefetcher(struct cache_t *cp, md_addr_t addr) {
     open_ended_init = 1;
   }
   
-  unsigned int PC = get_PC();
-  int index = (PC >> 3) & (TABLE_SIZE - 1);
+  md_addr_t PC = get_PC();
+  unsigned int index = (PC >> 3) & (TABLE_SIZE - 1);
   PerceptronEntry *entry = &PLT[index];
   
   /* If the PC is different from the previous PC, reset the entry: */
@@ -724,21 +715,19 @@ void open_ended_prefetcher(struct cache_t *cp, md_addr_t addr) {
     entry->history_idx = 1;
     return;
   }
+
+  int detected_stride = detect_stride(entry, addr);
   
   entry->addr_history[entry->history_idx % HISTORY_BITS] = addr;
   entry->history_idx++;
-  
-  int detected_stride = detect_stride(entry, addr);
   
   /* If there is a stride pattern, update the confidence: */
   if (detected_stride != 0) {
     if (entry->stride == detected_stride && entry->confidence < 7) {
       entry->confidence++;
     } else {
-      if (entry->confidence > 0) {
-        entry->confidence--;
-        entry->stride = detected_stride;
-      }
+      entry->stride=detected_stride;
+      entry->confidence = (entry->confidence > 1) ? entry->confidence-1 : 1;
     }
   /* If there is no stride pattern, decrease the confidence: */
   } else {
@@ -761,12 +750,11 @@ void open_ended_prefetcher(struct cache_t *cp, md_addr_t addr) {
     /* Issue prefetches: */
     for (int i = 1; i <= degree; i++) {
       md_addr_t fetch_address = addr + i * stride;
-      fetch_address -= (fetch_address % cp->bsize);
+      fetch_address = CACHE_BADDR(cp, fetch_address);
       
       /* If the address is not in cache, issue prefetch: */
       if (cache_probe(cp, fetch_address) == 0) {
         cache_access(cp, Read, fetch_address, NULL, cp->bsize, 0, NULL, NULL, 1);
-        entry->total_prefetches++;
         
         if (i >= 3 && entry->confidence < 5) {
           break;
