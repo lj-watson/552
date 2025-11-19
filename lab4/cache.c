@@ -602,7 +602,7 @@ void stride_prefetcher(struct cache_t *cp, md_addr_t addr) {
     /* Prefetch if state is in INIT, TRANSIENT, or STEADY: */
     if (entry->state == INIT ||entry->state == TRANSIENT || entry->state == STEADY ) {
       md_addr_t fetch_address = addr + entry->stride;
-      fetch_address -= fetch_address%cp->bsize;
+      fetch_address = CACHE_BADDR(cp, fetch_address);
 
       /* Prefetch cache if the fetch_address is not in cache: */
       if (cache_probe(cp, fetch_address) == 0) {
