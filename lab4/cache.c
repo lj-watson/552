@@ -609,93 +609,163 @@ void stride_prefetcher(struct cache_t *cp, md_addr_t addr) {
 }
 
 /* Open Ended Prefetcher Variables: */
-#define NUM_PERCEPTRONS 256 // Number of Perceptron weights
-#define HISTORY_BITS 62 // Number of history bits
-#define THETA (1.93 * HISTORY_BITS + 14) // Confidence Threshold for Training
+#define TABLE_SIZE 512
+#define HISTORY_BITS 8
+#define MAX_PREFETCH_DEGREE 4
+#define THETA 3
+#define FILTER_SIZE 64
 
-// To prevent oversaturated decisions, set MAX and MIN:
-#define WEIGHT_MAX 127
-#define WEIGHT_MIN -127
+typedef struct {
+  unsigned int pc;             
+  md_addr_t last_addr;          
+  int stride;                   
+  int confidence;               // Confidence counter (0-7)
+  md_addr_t addr_history[HISTORY_BITS]; 
+  int history_idx;              
+  int successful_prefetches;    
+  int total_prefetches;         
+} PerceptronEntry;
 
-static int8_t weights[NUM_PERCEPTRONS][HISTORY_BITS];
-static int8_t bias[NUM_PERCEPTRONS];
-static int8_t history[HISTORY_BITS];  
-static int initialized = 0;
+typedef struct {
+  md_addr_t addr;
+  unsigned char useful;
+} PrefetchFilter;
 
-int idx;
-int result;
-int has_init = 0;
-md_addr_t last_addr = 0;
-int pidx = 0;
-int perceptron_output = 0;
+/* Perceptron Learning Table (PLT): */
+PerceptronEntry PLT[TABLE_SIZE];
+int open_ended_init = 0;
+
+/* Helper function that detects if there is a stride pattern */
+int detect_stride(PerceptronEntry *entry, md_addr_t addr) {
+  /* If there is not enough history: */
+  if (entry->history_idx < 2) {
+    return 0; 
+  }
+  
+  /* Get the last 2 addresses: */
+  md_addr_t addr1 = entry->addr_history[(entry->history_idx - 1 + HISTORY_BITS) % HISTORY_BITS];
+  md_addr_t addr2 = entry->addr_history[(entry->history_idx - 2 + HISTORY_BITS) % HISTORY_BITS];
+  
+  int new_stride = (int)(addr - addr1);
+  int prev_stride = (int)(addr1 - addr2);
+  
+  if (new_stride != 0 && (new_stride == prev_stride || abs(new_stride - prev_stride) <= 64)) {
+    return new_stride;
+  }
+  
+  return 0;
+} 
+
+/* Helper function to calculate prefetch aggressiveness */
+int calculate_degree(PerceptronEntry *entry) {
+  if (entry->confidence < THETA) {
+    return 1;
+  }
+  
+  int accuracy = 0;
+  if (entry->total_prefetches > 0) {
+    accuracy = (entry->successful_prefetches * 100) / entry->total_prefetches;
+  }
+
+  if (accuracy >= 70 && entry->confidence >= 6) {
+    return 4;
+  } else if (accuracy >= 50 && entry->confidence >= 4) {
+    return 3;
+  } else if (accuracy >= 30 && entry->confidence >= 3) {
+    return 2;
+  }
+  
+  return 1;
+}
 
 /* Open Ended Prefetcher */
 void open_ended_prefetcher(struct cache_t *cp, md_addr_t addr) {
   /* Initialize if we have not done this before: */
-  if (!initialized) {
-    for (int i = 0; i < NUM_PERCEPTRONS; i++) {
-      bias[i] = 0;
+  if (!open_ended_init) {
+    for (int i = 0; i < TABLE_SIZE; i++) {
+      PLT[i].pc = 0;
+      PLT[i].last_addr = 0;
+      PLT[i].stride = 0;
+      PLT[i].confidence = 0;
+      PLT[i].history_idx = 0;
+      PLT[i].successful_prefetches = 0;
+      PLT[i].total_prefetches = 0;
+
       for (int j = 0; j < HISTORY_BITS; j++) {
-        weights[i][j] = 0;
+        PLT[i].addr_history[j] = 0;
       }
     }
-    for (int i = 0; i < HISTORY_BITS; i++) {
-      history[i] = -1;
+
+    open_ended_init = 1;
+  }
+  
+  unsigned int PC = get_PC();
+  int index = (PC >> 3) & (TABLE_SIZE - 1);
+  PerceptronEntry *entry = &PLT[index];
+  
+  /* If the PC is different from the previous PC, reset the entry: */
+  if (entry->pc != PC) {
+    entry->pc = PC;
+    entry->last_addr = addr;
+    entry->stride = 0;
+    entry->confidence = 0;
+    entry->history_idx = 0;
+    entry->addr_history[0] = addr;
+    entry->history_idx = 1;
+    return;
+  }
+  
+  entry->addr_history[entry->history_idx % HISTORY_BITS] = addr;
+  entry->history_idx++;
+  
+  int detected_stride = detect_stride(entry, addr);
+  
+  /* If there is a stride pattern, update the confidence: */
+  if (detected_stride != 0) {
+    if (entry->stride == detected_stride && entry->confidence < 7) {
+      entry->confidence++;
+    } else {
+      if (entry->confidence > 0) {
+        entry->confidence--;
+        entry->stride = detected_stride;
+      }
     }
+  /* If there is no stride pattern, decrease the confidence: */
+  } else {
+    if (entry->confidence > 0) {
+      entry->confidence--;
+    }
+  }
+  
+  /* If confidence meets the threshold and there is a stride, issue prefetches: */
+  if (entry->confidence >= THETA && entry->stride != 0) {
+    int degree = calculate_degree(entry);
+    degree = (degree > MAX_PREFETCH_DEGREE) ? MAX_PREFETCH_DEGREE : degree;
+    
+    /* Adjust the stride by the block size: */
+    int stride = entry->stride;
+    if (abs(stride) < cp->bsize) {
+      stride = (stride > 0) ? cp->bsize : -(cp->bsize);
+    }
+    
+    /* Issue prefetches: */
+    for (int i = 1; i <= degree; i++) {
+      md_addr_t fetch_address = addr + i * stride;
+      fetch_address -= (fetch_address % cp->bsize);
+      
+      /* If the address is not in cache, issue prefetch: */
+      if (cache_probe(cp, fetch_address) == 0) {
+        cache_access(cp, Read, fetch_address, NULL, cp->bsize, 0, NULL, NULL, 1);
+        entry->total_prefetches++;
         
-    last_addr = addr;
-    initialized = 1;
-  }
-
-  int delta = (addr > last_addr) ? 1 : -1;
-
-  int hash = 0;
-  for (int i = 0; i < HISTORY_BITS; i++) {
-    if (history[i] == 1) {
-      hash |= (1u << i);
-    }
-  }
-  int PC = get_PC();
-  pidx = ((PC >> 3) ^ hash) & (NUM_PERCEPTRONS - 1);
-        
-  int prediction = bias[pidx];
-  for (int i = 0; i < HISTORY_BITS; i++) {
-    prediction += weights[pidx][i] * history[i];
-  }
-
-  int predicted = (prediction >= 0 ? 1 : -1);
-  if (predicted != delta || abs(prediction) <= THETA) {
-    if (delta == 1 && bias[pidx] < WEIGHT_MAX) { 
-      bias[pidx]++;
-    } else if (delta == -1 && bias[pidx] > WEIGHT_MIN) {
-      bias[pidx]--;
-    }
-
-    for (int i = 0; i < HISTORY_BITS; i++) {
-      if (history[i] == delta && weights[pidx][i] < WEIGHT_MAX) {
-        weights[pidx][i]++;
-      } else if (history[i] != delta && weights[pidx][i] > WEIGHT_MIN) {
-        weights[pidx][i]--;
+        if (i >= 3 && entry->confidence < 5) {
+          break;
+        }
       }
     }
   }
-
-  int prefetch_direction = predicted;
-  int step = 64;  
-  md_addr_t fetch_address = addr + prefetch_direction * step;
-  fetch_address -= fetch_address%cp->bsize;
-
-  /* Prefetch cache if the fetch_address is not in cache: */
-  if (cache_probe(cp, fetch_address) == 0) {
-    cache_access(cp, Read, fetch_address, NULL, cp->bsize, 0, NULL, NULL, 1);
-  }
-
-  for (int i = HISTORY_BITS - 1; i > 0; i--) {
-    history[i] = history[i - 1];
-  }
-
-  history[0] = delta;
-  last_addr = addr;
+  
+  entry->last_addr = addr;
 }
 /* ECE552 Assignment 4 - END CODE*/
 
