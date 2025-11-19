@@ -511,7 +511,8 @@ md_addr_t get_PC();
 /* Next Line Prefetcher */
 void next_line_prefetcher(struct cache_t *cp, md_addr_t addr) {
   // prefetch request to memory address ADDR + cache_line_size
-  int next_addr = addr + cp->bsize;
+  md_addr_t next_addr = addr + cp->bsize;
+  next_addr = CACHE_BADDR(cp, next_addr); // start at line addr
 
   // skip if already in cache
   if(cache_probe(cp, next_addr)) return;
