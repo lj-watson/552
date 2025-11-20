@@ -748,10 +748,6 @@ void open_ended_prefetcher(struct cache_t *cp, md_addr_t addr) {
       /* If the address is not in cache, issue prefetch: */
       if (cache_probe(cp, fetch_address) == 0) {
         cache_access(cp, Read, fetch_address, NULL, cp->bsize, 0, NULL, NULL, 1);
-        
-        if (i >= 3 && entry->confidence < 5) {
-          break;
-        }
       }
     }
   }
