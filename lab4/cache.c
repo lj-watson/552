@@ -623,7 +623,6 @@ void stride_prefetcher(struct cache_t *cp, md_addr_t addr) {
 #define HISTORY_BITS 8
 #define MAX_PREFETCH_DEGREE 4
 #define THETA 3
-#define FILTER_SIZE 64
 
 typedef struct {
   md_addr_t pc;             
@@ -633,12 +632,6 @@ typedef struct {
   md_addr_t addr_history[HISTORY_BITS]; 
   int history_idx;                    
 } PerceptronEntry;
-
-typedef struct {
-  md_addr_t addr;
-  unsigned char useful;
-} PrefetchFilter;
-
 /* Perceptron Learning Table (PLT): */
 PerceptronEntry PLT[TABLE_SIZE];
 int open_ended_init = 0;
