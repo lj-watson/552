@@ -10,27 +10,37 @@ int main(void) {
     register int sum = 0;
     register int i = 0;
     register int j = 0;
-    register int k = 0;
+    register int k = 1;
 
     /* Test with several different patterns and strides: */
-    for (i = 0, j = 1; i < 50000; i++) {
-        if (i*64 >= 1000000 || j*25 >= 1000000) {
-            break;
-        }
+    // for (i = 0, j = 1; i < 50000; i++) {
+    //     if (i*64 >= 1000000 || j*25 >= 1000000) {
+    //         break;
+    //     }
     
-        sum += array[i*8];
-        sum += array[j*25];
-        sum += array[i*64];
-        j+=2;
-    }
+    //     sum += array[i*8];
+    //     sum += array[j*25];
+    //     sum += array[i*64];
+    //     j+=2;
+    // }
 
-    for (i = 0, j = 1; i < 100000; i++) {
-        if (k*5 >= 1000000) {
-            break;
-        }
-    
-        sum += array[k*5];
-        k+=5;
+    // for (k = 1; k < 1000000; k = (k + 8) * 2) {
+    //     sum += array[k];
+    // }
+
+    /* Test with several different patterns and strides determined by the modulo of i: */
+    for(; i < 1000000;) {
+        if (i%4 == 0) {
+            i += 64;
+        } else if (i%4 == 1) {
+            i += 25;
+        } else if (i%4 == 2) {
+            i += 99;
+        } else if (i%4 == 3) {
+            i += 128;
+        } 
+
+        sum += array[i];
     }
 
     
