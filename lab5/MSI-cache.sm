@@ -646,7 +646,6 @@ machine(L1Cache, "MSI L1 Cache")
   }
 
   /* Transitions from I: */
-
   // I to IS_D:
   transition(I, {Load, Ifetch}, IS_D) {
     v_allocateTBE; // Allocate space in the TBE
@@ -673,16 +672,10 @@ machine(L1Cache, "MSI L1 Cache")
   }
 
   // IM_AD to M:
-  transition(IM_AD, {Data_from_Dir_No_Acks, Data_from_Owner}, M) {
+  transition(IM_AD, {Data_from_Dir_No_Acks, Data_from_Owner, Data_from_Dir_Ack_Cnt_Last}, M) {
     u_writeDataToCache; // Load data in cache
+    q_updateAckCount;   // If an Ack took place, update Ack count
     w_deallocateTBE;    // Deallocate space from the TBE
-    sx_store_hit;       // Store has completed
-    n_popResponseQueue; // Pop message from response queue
-  }
-  transition(IM_AD, Data_from_Dir_Ack_Cnt_Last, M) {
-    u_writeDataToCache; // Load data in cache
-    q_updateAckCount;   // No longer pending Ack
-    w_deallocateTBE;    // Deallocate space from TBE
     sx_store_hit;       // Store has completed
     n_popResponseQueue; // Pop message from response queue
   }
@@ -705,23 +698,151 @@ machine(L1Cache, "MSI L1 Cache")
   }
   // IM_A to M:
   transition(IM_A, Inv_Ack_all, M) {
-    q_updateAckCount;
-    w_deallocateTBE;
-    sx_store_hit;
-    n_popResponseQueue;
+    w_deallocateTBE;    // Deallocate space from the TBE
+    q_updateAckCount;   // No longer pending Ack
+    sx_store_hit;       // Store has completed
+    n_popResponseQueue; // Pop message from response queue
   }
 
   // II_A to I 
   transition(II_A, WB_Ack, I) {
-    forward_eviction_to_cpu,
-    w_deallocateTBE;
-    h_deallocateL1CacheBlock;
-    o_popForwardedRequestQueue;
+    forward_eviction_to_cpu;    // Inform sequencer of cache eviction
+    w_deallocateTBE;            // Deallocate space from TBE
+    h_deallocateL1CacheBlock;   // Deallocate block from cache
+    o_popForwardedRequestQueue; // Pop message from request queue
   }
 
   /* Transitions from S: */
+  transition(S, {Load, Ifetch}) {
+    r_load_hit;          // Load hit
+    m_popMandatoryQueue; // Pop message from request queue
+  }
+  // S to SM_AD
+  transition(S, Store, SM_AD) {
+    v_allocateTBE; // Allocate space in the TBE
+    x_copyDataFromCacheToTBE; // Copy data from cache to TBE
+    p_profileMiss; // Check if there was a cache miss
+    am_issueGetM;  // Issue GETM request to Dir
+    m_popMandatoryQueue; // Pop message from request queue
+  }
+  // S to SI_A
+  transition(S, Replacement, SI_A) {
+    v_allocateTBE; // Allocate space in the TBE
+    bs_issuePUTS;  // Issue PUTS request to Dir
+    x_copyDataFromCacheToTBE; // Copy data from cache to TBE
+  }
+  // S to I 
+  transition(S, Inv, I) {
+    fi_sendInvAck; // Send Inv-Ack to Req
+    forward_eviction_to_cpu;    // Inform sequencer of cache eviction
+    h_deallocateL1CacheBlock;   // Deallocate space from cache
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
+
+  transition(SM_AD, {Load, Ifetch}) {
+    r_load_hit;          // Load hit
+    m_popMandatoryQueue; // Pop message from request queue
+  }
+  // SM_AD to IM_AD
+  transition(SM_AD, Inv, IM_AD) {
+    fi_sendInvAck; // Send Inv Ack to Req
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
+  // SM_AD to M 
+  transition(SM_AD, {Data_from_Dir_No_Acks, Data_from_Dir_Ack_Cnt_Last}, M) {
+    u_writeDataToCache; // Write data to the cache
+    w_deallocateTBE;    // Deallocate space from TBE
+    q_updateAckCount;   // If there was an Ack that took place, update
+    sx_store_hit;       // Store completed
+    n_popResponseQueue  // Pop message from response queue
+  }
+  // SM_AD to SM_A
+  transition(SM_AD, Data_from_Dir_Ack_Cnt, SM_A) {
+    u_writeDataToCache; // Write data to cache
+    q_updateAckCount;   // Update Ack count, waiting for Ack
+    n_popResponseQueue; // Pop message from response queue
+  }
+  transition(SM_AD, Inv_Ack) {
+    q_updateAckCount;   // Update Ack count
+    n_popResponseQueue; // Pop message from response queue
+  }
+
+  transition(SM_A, {Load, Ifetch}) {
+    r_load_hit;          // Load hit
+    m_popMandatoryQueue; // Pop message from request queue
+  }
+  transition(SM_A, Inv_Ack) {
+    q_updateAckCount;   // Update Ack count
+    n_popResponseQueue; // Pop message from response queue
+  }
+  // SM_A to M
+  transition(SM_A, Inv_Ack_all, M) {
+    w_deallocateTBE;    // Deallocate TBE
+    q_updateAckCount;   // Update Ack count
+    sx_store_hit;       // Store has been completed
+    n_popResponseQueue; // Pop message from response queue
+  }
+
+  // SI_A to II_A
+  transition(SI_A, Inv, II_A) {
+    fi_sendInvAck; // Send Inv-Ack to Req
+    o_popForwardedRequestQueue // Pop message from request queue
+  }
+  // SI_A to I
+  transition(SI_A, WB_Ack, I) {
+    forward_eviction_to_cpu; // Inform sequencer of cache eviction
+    w_deallocateTBE; // Deallocate TBE
+    h_deallocateL1CacheBlock; // Deallocate cache block
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
 
   /* Transitions from M: */
+  transition(M, {Load, Ifetch}) {
+    r_load_hit;           // Load hit
+    m_popMandatoryQueue;  // Pop message from request queue
+  }
+  transition(M, Store) {
+    s_store_hit;          // Store hit
+    m_popMandatoryQueue;  // Pop message from request queue
+  }
+  // M to MI_A
+  transition(M, Replacement, MI_A) {
+    v_allocateTBE;  // Allocate space for TBE
+    bm_issuePUTM;   // Send PutM + data to Dir
+    x_copyDataFromCacheToTBE; // Copy data from cache to TBE
+  }
+  // M to S 
+  transition(M, Fwd_GetS, S) {
+    e_sendDataFromCacheToRequestor; // Send data to Req
+    de_sendDataFromCacheToDir; // Send data to Dir
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
+  // M to I
+  transition(M, Fwd_GetM, I) {
+    forward_eviction_to_cpu; // Inform sequencer of cache eviction 
+    e_sendDataFromCacheToRequestor; // Send data to Req
+    h_deallocateL1CacheBlock; // Deallocate from cache
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
+
+  // MI_A to SI_A
+  transition(MI_A, Fwd_GetS, SI_A) { // Essentially is like M->S 
+    ee_sendDataFromTBEToRequestor;  // Send data from TBE to Req
+    dee_sendDataFromTBEToDir; // Send data from TBE to Dir
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
+  // MI_A to II_A
+  transition(MI_A, Fwd_GetM, II_A) { // Essentially like M->I
+    ee_sendDataFromTBEToRequestor; // Send data from TBE to Req
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
+  // MI_A To I
+  transition(MI_A, WB_Ack, I) {
+    forward_eviction_to_cpu;  // Inform sequencer of cache eviction
+    h_deallocateL1CacheBlock; // Deallocate cache block
+    w_deallocateTBE;  // Deallocate TBE
+    o_popForwardedRequestQueue; // Pop message from request queue
+  }
 
 /* ECE552 Assignment 5 - END CODE */
 
