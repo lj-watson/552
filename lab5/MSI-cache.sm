@@ -625,7 +625,7 @@ machine(L1Cache, "MSI L1 Cache")
     z_stall;
   }
 
-  transition({IS_D, IM_AD, IM_A, SM_AD, SM_A, MI_A,, SI_A, II_A}, Store) {
+  transition({IS_D, IM_AD, IM_A, SM_AD, SM_A, MI_A, SI_A, II_A}, Store) {
     z_stall;
   }
 
@@ -641,7 +641,7 @@ machine(L1Cache, "MSI L1 Cache")
     z_stall;
   }
 
-  transition({IM_AD, IM_A, SM_AD, SM_A}, Fwd_GetS) {
+  transition({IM_AD, IM_A, SM_AD, SM_A}, Fwd_GetM) {
     z_stall;
   }
 
