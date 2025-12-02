@@ -42,12 +42,22 @@ machine(Directory, "Directory protocol")
     M, AccessPermission:Read_Write, desc="Modified";
 
     /* ECE552: Complete this section here */
+    /* ECE552 Assignment 5 - BEGIN CODE */
+    S, AccessPermission:Read_Only, desc="Shared";
+    /* ECE552 Assignment 5 - END CODE */
 
     //========================
     //ECE552: Transient States
     //========================
 
     /* ECE552: Complete this section here */
+    /* ECE552 Assignment 5 - BEGIN CODE */
+    M_SD, AccessPermission:Busy, desc="Received GetS request, directory is not owner, need to get data from owner";
+    SD_S, AccessPermission:Busy, desc="Follow up to M_SD, received dirty block needs to be written back before block is invalidated"; 
+    IS_D, AccessPermission:Busy, desc="Received GetS and block is owned by directory (invalid), data must be retrieved from memory";
+    IM_D, AccessPermission:Busy, desc="Received GetM and block is owned by directory (invalid), data must be retrieved from memory";
+    MI_D, AccessPermission:Busy, desc="Received PutM and must write data back into memory before marking block as invalid";
+    /* ECE552 Assignment 5 - END CODE */
   }
 
   // =============================================================================
@@ -536,6 +546,246 @@ getDirectoryEntry(address).Sharers);
   // =============================================================================
 
   /* ECE552: Complete this section here */
+  /* ECE552 Assignment 5 - BEGIN CODE */
 
+  /* ----------- BLOCK STATE: INVALID - directory owns it ----------- */
+  
+  // Receives request to get the block with read only access
+  transition(I, GETS, IS_D)
+  {
+   // Retrieve block from memory
+   qf_queueMemoryFetchRequest;
+
+   i_popIncomingRequestQueue;
+  }
+
+  // Receives request to modify the block
+  transition(I, GETM, IM_D)
+  {
+    // Retrieve block from memory
+   qf_queueMemoryFetchRequest;
+
+   // Set owner to requestor
+    e_ownerIsRequestor;
+
+   i_popIncomingRequestQueue;
+  }
+
+  // Receives any request to evict the block from the requester's cache
+  // In this case the block is already invalidated; there must have been a
+  // GetM response that was processed before this request was received, and
+  // the requester did not receive the invalidation before it was sent.
+  transition(I, {PUTS_Last, PUTS_NotLast})
+  {
+    // Send Put-Ack to request
+    a_sendWriteBackAck;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to evict the block from a non-owner who had the block
+  // marked as modified. Possible if A was owner and sends PutM, but B sends a
+  // GetM which is processed first, sending Fwd-GetM to A and marking B as owner.
+  // In this case the directory can just send a put-ack as the data will be sent
+  // from A's block to B's block
+  transition(I, PUTM_NotOwner)
+  {
+    a_sendWriteBackAck;
+    i_popIncomingRequestQueue;
+  }
+
+  /* ----------- BLOCK STATE: SHARED - one or more controllers have read-only access ----------- */
+
+  // Receives a request to get the block with read only access
+  transition(S, GETS)
+  {
+    // Send data to requester
+    ds_sendSharedData;
+
+    // Add requester to sharers
+    ars2_addRequestorToSharers;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to modify the block
+  transition(S, GETM, M)
+  {
+    // Send data to requestor
+    ds2_sendSharedData;
+
+    // Send Invalidation to sharers
+    fwm_sendFwdInvToSharersMinusRequestor;
+
+    // Clear sharers
+    cs_clearSharers;
+
+    // Set owner to requestor
+    e_ownerIsRequestor;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to evict the cache block, but it is not the last sharer
+  transition(S, PUTS_NotLast)
+  {
+    // Remove the requestor from sharers
+    kk_removeRequestSharer;
+
+    // Send put-ack to Requestor
+    a_sendWriteBackAck;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to evict the cache block from the last sharer
+  transition(S, PUTS_Last, I)
+  {
+    // Remove the requestor from sharers
+    kk_removeRequestSharer;
+
+    // Send put-ack to Requestor
+    a_sendWriteBackAck;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to evict block from controller that thinks it is the owner
+  // Occurs if A is owner, sends PutM, but B sends GetS which arrives to directory
+  // first. Directory sends Fwd-GetS to A who, in the MI state, still responds
+  // and is received by directory before the PutM request, transitioning it fully
+  // to the Shared state. A is now in SI state so it needs to be treated as a sharer
+  // requesting eviction.
+  transition(S, PUTM_NotOwner)
+  {
+    // Remove the requestor from sharers
+    kk_removeRequestSharer;
+
+    // Send put-ack to Requestor
+    a_sendWriteBackAck;
+
+    i_popIncomingRequestQueue;
+  }
+
+  /* ----------- BLOCK STATE: Modified - One core owns permission to read-write ----------- */
+  // Receives a request to get the block with read only access
+  transition(M, GETS, M_SD)
+  {
+    // Forward GETS to Owner so it will send dirty block back to directory and requestor
+    f_forwardRequest;
+
+    // Add requestor and owner to sharers
+    ars2_addRequestorToSharers;
+    aos_addOwnertoSharers;
+
+    // Clear owners
+    c_clearOwner;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to modify the block
+  transition(M, GETM)
+  {
+    // Forward GETM to owner
+    f_forwardRequest;
+
+    // Set owner to requestor
+    e_ownerIsRequestor;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to evict cache block from sharer or non owner
+  // Occurs if sharer sent Put request before receiving invalidation
+  // or if owner was updated before previous owner's putM was received
+  transition(M, {PUTS_NotLast, PUTS_Last, PUTM_NotOwner})
+  {
+    // Send PutAck to requestor
+    a_sendWriteBackAck;
+
+    i_popIncomingRequestQueue;
+  }
+
+  // Receives a request to evict dirty cache block from owner
+  transition(M, PUTM_Owner, MI_D)
+  {
+    // Copy data to memory
+    lq_queueMemoryWBRequest;
+
+    // Propogate to directory entries
+    pl_writeDataToDirectory;
+
+    // Clear owner
+    c_clearOwner;
+
+    i_popIncomingRequestQueue;
+  }
+
+  /* ----------- BLOCK STATE: TRANSIENT ----------- */
+
+  // Directory is waiting for data WB to memory to finish before sending
+  // memory write-back acknowledgement
+  transition(MI_D, Memory_Ack, I)
+  {
+    // Send PutAck to requestor
+    la_sendWriteBackAck;
+
+    qm_popMemQueue;
+  }
+
+  // Directory is waiting for block data from memory to send
+  // to requesting core
+  transition(IS_D, Memory_Data, S)
+  {
+    // Send the data to the requestor
+    d_sendData;
+
+    // Add the requestor to the sharers list
+    ars1_addRequestorToSharers;
+
+    qm_popMemQueue;
+  }
+
+  transition(IM_D, Memory_Data, M)
+  {
+    // send the data to the requestor
+    d_sendData;
+
+    qm_popMemQueue;
+  }
+
+  // receive data from core that was invalidated, need to WB to memory
+  transition(M_SD, Data, SD_S)
+  {
+    // start WB request
+    lq2_queueMemoryWBRequest;
+
+    // also propogate to directory entries
+    pl2_writeDataToDirectory;
+
+    pr_popIncomingResponseQueue;
+  }
+
+  // WB from above is finished
+  transition(SD_S, Memory_Ack, S)
+  {
+    qm_popMemQueue;
+  }
+
+  // Receive a PUT request from the prev owner who is now a sharer before its own
+  // data is WB
+  transition({M_SD, SD_S, MI_D}, {PUTS_Last, PUTS_NotLast, PUTM_NotOwner})
+  {
+    kk_removeRequestSharer;
+    a_sendWriteBackAck;
+    i_popIncomingRequestQueue;
+  }
+
+  transition({M_SD, SD_S, MI_D, IS_D, IM_D}, {GETS, GETM})
+  {
+    z_stall;
+  }
+  /* ECE552 Assignment 5 - END CODE */
 
 }
