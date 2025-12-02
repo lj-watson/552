@@ -786,6 +786,11 @@ getDirectoryEntry(address).Sharers);
   {
     z_stall;
   }
+
+  transition({IM_D, IS_D}, {PUTS_Last, PUTS_NotLast, PUTM_NotOwner})
+  {
+    z_stall;
+  }
   /* ECE552 Assignment 5 - END CODE */
 
 }
