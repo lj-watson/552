@@ -698,8 +698,8 @@ machine(L1Cache, "MSI L1 Cache")
   }
   // IM_A to M:
   transition(IM_A, Inv_Ack_all, M) {
-    w_deallocateTBE;    // Deallocate space from the TBE
     q_updateAckCount;   // No longer pending Ack
+    w_deallocateTBE;    // Deallocate space from the TBE
     sx_store_hit;       // Store has completed
     n_popResponseQueue; // Pop message from response queue
   }
@@ -751,8 +751,8 @@ machine(L1Cache, "MSI L1 Cache")
   // SM_AD to M 
   transition(SM_AD, {Data_from_Dir_No_Acks, Data_from_Dir_Ack_Cnt_Last}, M) {
     u_writeDataToCache; // Write data to the cache
-    w_deallocateTBE;    // Deallocate space from TBE
     q_updateAckCount;   // If there was an Ack that took place, update
+    w_deallocateTBE;    // Deallocate space from TBE
     sx_store_hit;       // Store completed
     n_popResponseQueue  // Pop message from response queue
   }
@@ -777,8 +777,8 @@ machine(L1Cache, "MSI L1 Cache")
   }
   // SM_A to M
   transition(SM_A, Inv_Ack_all, M) {
-    w_deallocateTBE;    // Deallocate TBE
     q_updateAckCount;   // Update Ack count
+    w_deallocateTBE;    // Deallocate TBE
     sx_store_hit;       // Store has been completed
     n_popResponseQueue; // Pop message from response queue
   }
